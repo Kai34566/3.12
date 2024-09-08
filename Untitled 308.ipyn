@@ -1,0 +1,114 @@
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+# Настройка бота
+API_TOKEN = '7399727926:AAFrzdjj7svQVxlavXbPV7hXfXimq6krnoY'
+bot = telebot.TeleBot(API_TOKEN)
+
+# ID канала, куда отправляются сообщения
+CHANNEL_ID = '@JetReport'
+
+def send_violation_report(sender_id, sender_name, violator_id, violator_name, violation_reason, chat_username, chat_id, message_id):
+    try:
+        # Формирование ссылки на сообщение в чате
+        if chat_username:  # Публичный чат с username
+            chat_username = chat_username.replace('@MafiosoKG', '')  # Удаляем @, если есть
+            message_link = f"https://t.me/{chat_username}/{message_id}"
+        else:  # Приватный чат (если username отсутствует)
+            message_link = f"https://t.me/c/{abs(chat_id)}/{message_id}"
+
+        # Формирование сообщения для канала
+        report_message = ( 
+            f"🤖 Жалоба необработанная\n"
+            f"☠️ Отправил(а): {sender_name} [{sender_id}]\n"
+            f"👿 Нарушил(а): {violator_name} [{violator_id}]\n"
+            f"🗒️ Причина: {violation_reason}\n"
+            f"🖇️ Ссылка: {message_link}\n"
+            f"💬 Чат: {chat_username or 'Приватный чат'} [{chat_id}]"
+        )
+
+        # Создание кнопок для одобрения и отклонения
+        markup = InlineKeyboardMarkup()
+        approve_button = InlineKeyboardButton("💚 ОДОБРИТЬ", callback_data="approve")
+        reject_button = InlineKeyboardButton("❤️ ОТКЛОНИТЬ", callback_data="reject")
+        markup.add(approve_button, reject_button)
+
+        # Отправка сообщения в канал с кнопками
+        bot.send_message(CHANNEL_ID, report_message, reply_markup=markup)
+
+        # Отправка уведомления в группу без привязки к исходному сообщению
+        notification_message = (
+            f"🗒️ Ваша жалоба отправлена администраторам и ожидает рассмотрения.\n"
+            f"💬 Причина: {violation_reason}\n"
+            f"🖇️ Ссылка: {message_link}"
+        )
+        bot.send_message(chat_id, notification_message, disable_web_page_preview=True)
+
+    except Exception as e:
+        print(f"Ошибка отправки сообщения: {e}")
+
+# Обработчик команды /report
+@bot.message_handler(commands=['report'])
+def handle_report(message):
+    if not message.reply_to_message:
+        # Если команда была отправлена без ответа на другое сообщение, удаляем ее
+        try:
+            bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+        except telebot.apihelper.ApiTelegramException as e:
+            print(f"Не удалось удалить сообщение с командой /report: {e}")
+        return
+
+    if len(message.text) <= len('/report '):
+        bot.reply_to(message, "Пожалуйста, укажите причину жалобы после команды /report.")
+        return
+
+    # Получаем информацию для отчета
+    sender_name = message.from_user.first_name  # Имя отправителя жалобы
+    sender_id = message.from_user.id            # ID отправителя жалобы
+    violator_name = message.reply_to_message.from_user.first_name  # Имя нарушителя
+    violator_id = message.reply_to_message.from_user.id            # ID нарушителя
+    violation_reason = message.text[len('/report '):]  # Причина жалобы (всё, что после /report)
+    chat_username = message.chat.username  # Имя пользователя чата (если доступно)
+    chat_id = message.chat.id          # ID чата
+    message_id = message.reply_to_message.message_id  # ID сообщения, на которое отправлена жалоба
+
+    # Отправка жалобы в канал
+    send_violation_report(sender_id, sender_name, violator_id, violator_name, violation_reason, chat_username, chat_id, message_id)
+
+    # Удаление сообщения с командой /report
+    try:
+        bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+    except telebot.apihelper.ApiTelegramException as e:
+        print(f"Не удалось удалить сообщение с командой /report: {e}")
+
+# Обработчик нажатий кнопок
+@bot.callback_query_handler(func=lambda call: True)
+def handle_callback(call):
+    try:
+        if call.data in ["approve", "reject"]:
+            # Определяем статус, который нужно установить
+            status = "✅ ОДОБРЕНА" if call.data == "approve" else "❎ ОТКЛОНЕНА"
+            
+            # Подтверждаем выбор пользователя
+            bot.answer_callback_query(call.id, text=f"Вы выбрали: {status}")
+            
+            # Формирование обновленного текста сообщения
+            original_text = call.message.text
+            lines = original_text.split("\n", 5)  # Разделяем сообщение на строки
+            if lines:
+                lines[0] = f"🤖 Жалоба {status}"  # Обновляем только первую строку статуса
+            update_message = "\n".join(lines)
+            
+            # Проверяем, изменился ли текст сообщения
+            if update_message != original_text:
+                # Обновление сообщения в канале
+                bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=update_message)
+
+            # Удаляем кнопки
+            bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
+
+    except Exception as e:
+        print(f"Ошибка обработки нажатия кнопки: {e}")
+
+# Запуск бота
+bot.polling(none_stop=True)
